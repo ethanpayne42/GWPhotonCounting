@@ -1,0 +1,13 @@
+universe = vanilla
+executable = /home/ethan.payne/projects/GWPhotonCounting/projects/PM_EOS/snr_CI_distribution/injection_submit.sh
+log = /home/ethan.payne/projects/GWPhotonCounting/projects/PM_EOS/snr_CI_distribution/logs/$(snr).log
+error = /home/ethan.payne/projects/GWPhotonCounting/projects/PM_EOS/snr_CI_distribution/logs/$(snr).err
+output = /home/ethan.payne/projects/GWPhotonCounting/projects/PM_EOS/snr_CI_distribution/logs/$(snr).out
+arguments = $(snr) $(index)
+accounting_group = ligo.dev.o4.cbc.pe.lalinference
+notification = error
+request_memory = 8192
+request_disk = 1
+getenv = true
+max_retries = 5
+queue 1

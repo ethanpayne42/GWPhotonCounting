@@ -3,7 +3,10 @@ import jax.numpy as jnp
 from scipy.interpolate import interp1d
 
 def load_data(file_path):
-        data = np.loadtxt(file_path, delimiter=',')
+        try:
+                data = np.loadtxt(file_path, delimiter=',')
+        except:
+                data = np.loadtxt(file_path)
         return data[:, 0], data[:, 1]
 
 def load_and_interpolate_data(data_path, frequencies):

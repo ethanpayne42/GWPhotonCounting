@@ -7,16 +7,24 @@ import bilby
 
 
 class Detector:
-    def __init__(self, frequencies, shot_noise_psd, classical_noise_quanta, ifo_name='CE',
+    def __init__(self, frequencies, shot_noise_psd, classical_noise_psd, detector_asd=False, ifo_name='CE',
                  base_filter_function=lorentzian_complex, N_frequency_spaces=15,
                  minimum_frequency=1.5e3, maximum_frequency=4e3, maximum_duration=4e-2,
                  random_seed=1234, gaussian_noise=False, **kwargs):
         # Load and interpolate shot noise PSD data
-        self.shot_noise_psd = load_and_interpolate_data(shot_noise_psd, frequencies)
+        if detector_asd is False:
+            self.shot_noise_psd = load_and_interpolate_data(shot_noise_psd, frequencies)
+        else:
+            self.shot_noise_psd = load_and_interpolate_data(shot_noise_psd, frequencies)**2
 
         # Load and interpolate classical noise quanta data, then transform it back into a PSD
-        classical_noise_quanta_psd = load_and_interpolate_data(classical_noise_quanta, frequencies)
-        self.classical_noise_psd = classical_noise_quanta_psd * 2 * self.shot_noise_psd
+        if classical_noise_psd is not None:
+            self.classical_noise_psd = load_and_interpolate_data(classical_noise_psd, frequencies)
+        else:
+            self.classical_noise_psd = np.zeros_like(self.shot_noise_psd)
+
+        # Generate the total PSD
+        self.total_psd = self.shot_noise_psd + self.classical_noise_psd
         
         # Setting up the spacing of the temporal mode filters
         self.N_total_filters = int(2 * maximum_duration * (maximum_frequency - minimum_frequency))
@@ -34,7 +42,7 @@ class Detector:
         # Setting up the interferometer
         self.ifo = bilby.gw.detector.FrequencyDependentInterferometer.from_name(ifo_name, time_dependent=False)
         self.ifo.power_spectral_density = bilby.gw.detector.PowerSpectralDensity.from_power_spectral_density_array(
-            frequencies, np.array(self.shot_noise_psd+self.classical_noise_psd))
+            frequencies, np.array(self.total_psd))
         
         if gaussian_noise is False:
             self.ifo.set_strain_data_from_zero_noise(sampling_frequency=2*frequencies[-1], duration=1/(frequencies[1]-frequencies[0]), start_time=0)
@@ -96,3 +104,9 @@ class Detector:
 
         return noise_photon_expectation
     
+    def calculate_optimal_snr(self, strain, frequencies, fmin = 1.5e3, fmax = 4e3):
+        mask1 = (frequencies >= fmin) & (frequencies <= fmax)
+        mask2 = (frequencies <= -fmin) & (frequencies >= -fmax)
+        mask = mask1 | mask2
+        optimal_snr = (np.real(np.sum(strain[mask] * np.conj(strain[mask])/self.total_psd[mask]))*(frequencies[1]-frequencies[0]))**0.5
+        return optimal_snr

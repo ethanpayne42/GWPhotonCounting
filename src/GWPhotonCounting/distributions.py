@@ -14,6 +14,9 @@ class BaseLikelihood():
         pass
 
     def log_likelihood_individual(self, observed_data, model_data):
+        """
+        Individual log likelihood for each temporal mode filter
+        """
         pass
 
     def log_likelihood(self, observed_data, model_data):
@@ -66,8 +69,8 @@ class PhaseQuadraturePhotonLikelihood(BaseLikelihood):
         probabilities = self.calculate_probabilities(data)
 
         val = jnp.outer(
-            random.uniform(random.PRNGKey(np.random.randint(0,100000)), shape=(len(data))),
-            jnp.ones(len(self.ns)))
+            random.uniform(random.PRNGKey(np.random.randint(0,100000)), shape=(len(data),)),
+            jnp.ones(self.ns.shape[0]))
 
         count_idx = jnp.argmax(val < jnp.cumsum(probabilities, axis=1), axis=1)
 
@@ -107,7 +110,7 @@ class MixturePhotonLikelihood(object):
     
     def log_likelihood_individual(self, observed_data, model_data_signal, model_data_noise):
 
-        m_max_counter = 1
+        m_max_counter = 2
         m_array = jnp.linspace(0,m_max_counter, m_max_counter+1, dtype=int)
 
         log_likelihood_vmap_indiv_inner = jax.vmap(self.log_likelihood_individual_inner_term, in_axes=(0,None, None, None))
@@ -132,16 +135,31 @@ class MixturePhotonLikelihood(object):
         return jax.scipy.special.logsumexp(self.log_likelihood(observed_data, model_data_signal, model_data_noise)) - jnp.log(model_data_signal.shape[0])
     
 
-class GaussianStrainLikelihood(BaseLikelihood):
-
+class GaussianStrainLikelihood():
     # Standard Gaussian homodyne readout strain likelihood
-    # TODO: Implement this class
 
-    def generate_realization(self, data):
+    def generate_realization(self, psd_data, frequencies):
         '''
-        Note that the data array is expected photon count not a probability
+        Note that the data here should be the PSD
         '''
-        return Geometric(1/(data+1)).sample(random.PRNGKey(np.random.randint(0,100000)))
+
+        duration = 1/(frequencies[1]  - frequencies[0])
+        norm1 = 1#0.5 * duration**0.5
+        re1, im1 = norm1*random.normal(random.PRNGKey(np.random.randint(0,100000)), shape=(2, len(frequencies)))
+        white_noise = re1 + 1j * im1
+
+        return white_noise * psd_data ** 0.5
     
-    def log_likelihood_individual(self, observed_data, model_data):
-        return jnp.atleast_2d(Geometric(1/(model_data+1)).log_prob(observed_data))
+    def log_likelihood(self, observed_data, model_data, psd_data, frequencies):
+
+        residual = observed_data - model_data
+
+        # * (frequencies[1]-frequencies[0])
+        return jnp.real(- 0.5  * jnp.einsum('ij, ij -> i', residual,jnp.conj(residual)/psd_data)) # note no factor of two since the psd is defined in negative and positive frequencies
+    
+    def __call__(self, observed_data, model_data, psd_data, frequencies):
+        """
+        Note that this includes the time marginalization by summing 
+        over the axis
+        """
+        return jax.scipy.special.logsumexp(self.log_likelihood(observed_data, model_data, psd_data, frequencies)) - jnp.log(model_data.shape[0])

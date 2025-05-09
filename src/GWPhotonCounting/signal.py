@@ -56,7 +56,7 @@ class PostMergerKNN(BasePhotonCountingSignal):
         hcross = phase_shift(hplus, angle = 2*phi0+jnp.pi/2)
 
         i_array = np.array(range(len(self.time_array)))
-        n_taper_start = (find_peaks(savgol_filter(np.abs(hplus)[:1000], 25,3))[0][4] + find_peaks(savgol_filter(np.abs(hcross)[:500], 25,3))[0][4])/2
+        n_taper_start = (find_peaks(savgol_filter(np.abs(hplus)[:1000], 25,3))[0][4] + find_peaks(savgol_filter(np.abs(hcross)[:1000], 25,3))[0][4])/2
 
         with np.errstate(divide='ignore'):
             z_start = (n_taper_start/i_array) + n_taper_start/(i_array - n_taper_start)
@@ -65,8 +65,8 @@ class PostMergerKNN(BasePhotonCountingSignal):
         hp_fd, freq_array = bilby.core.utils.nfft(hplus * sigma, sampling_frequency=1e3/(self.dt_ms))
         hc_fd, freq_array = bilby.core.utils.nfft(hcross * sigma, sampling_frequency=1e3/(self.dt_ms))
         
-        return interp1d(jnp.concatenate((freq_array/(1+z), -freq_array[1:]/(1+z))), jnp.concatenate((hp_fd, jnp.conj(hp_fd[1:]))), kind='cubic')(frequencies), \
-            interp1d(jnp.concatenate((freq_array/(1+z), -freq_array[1:]/(1+z))), jnp.concatenate((hc_fd, jnp.conj(hc_fd[1:]))), kind='cubic')(frequencies)
+        return interp1d(jnp.concatenate((freq_array/(1+z), -freq_array[1:]/(1+z))), jnp.concatenate((hp_fd, jnp.conj(hp_fd[1:]))), kind='cubic', bounds_error=False, fill_value=0)(frequencies), \
+            interp1d(jnp.concatenate((freq_array/(1+z), -freq_array[1:]/(1+z))), jnp.concatenate((hc_fd, jnp.conj(hc_fd[1:]))), kind='cubic', bounds_error=False, fill_value=0)(frequencies)
 
     def generate_strain(self, detector, frequencies, mtot, phi0, z, ra, dec, iota, psi):
         
@@ -83,7 +83,7 @@ class PostMergerLorentzian(BasePhotonCountingSignal):
 
     def __init__(self):
         pass
-
+    
     def generate_strain(self, detector, frequencies, f0, gamma, A, phase, t0):
 
         return jnp.atleast_2d(lorentzian_complex(frequencies, f0, gamma, A, phase) * \
