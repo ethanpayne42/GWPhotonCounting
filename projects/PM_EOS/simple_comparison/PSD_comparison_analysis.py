@@ -15,12 +15,12 @@ KNNModel = GWPhotonCounting.signal.PostMergerKNN(knn_file_path='/home/ethan.payn
 from bilby_cython.geometry import frequency_dependent_detector_tensor
 import numpy as np
 
-mtot = 2.5
+mtot = 2.4
 phi0 = 0
-z = 0.03
-ra = 0.0
-dec = 0.3
-iota=0.2
+z = 0.05
+ra = jnp.pi/4
+dec = jnp.pi/4
+iota=jnp.pi/4
 psi = 0
 
 PM_strain = KNNModel.generate_strain(detector_nosqz, frequencies, mtot, phi0, z, ra, dec, iota, psi)
@@ -53,9 +53,9 @@ for i, noise_scale in enumerate(jnp.logspace(-2, 2, 9)):
         num_chains=2, time_reconstruction=False, f0min=1.5e3,
         noise_scale=noise_scale)
     
-    fit_lorentzian_n.to_netcdf('result_noise_scaling_250418/pc_noise_scale_{}.nc'.format(i))
+    fit_lorentzian_n.to_netcdf('result_noise_scaling_250615/pc_noise_scale_{}.nc'.format(i))
 
-for i, noise_scale in enumerate(10**(-jnp.linspace(10,20,9)/10)):
+for i, noise_scale in enumerate(10**(-jnp.linspace(0,20,9)/10)):
 
     fit_lorentzian_strain = GWPhotonCounting.inference.StrainInference(detector_nosqz, frequencies, gaussian_likelihood).run(
         PM_strain,
@@ -64,4 +64,4 @@ for i, noise_scale in enumerate(10**(-jnp.linspace(10,20,9)/10)):
         num_chains=2, time_reconstruction=False, f0min=1.5e3,
         noise_scale=noise_scale)
     
-    fit_lorentzian_strain.to_netcdf('result_noise_scaling_250418/strain_noise_scale_{}.nc'.format(i))
+    fit_lorentzian_strain.to_netcdf('result_noise_scaling_250615/strain_noise_scale_{}.nc'.format(i))
