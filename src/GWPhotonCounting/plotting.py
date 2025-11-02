@@ -143,24 +143,23 @@ def generate_count_plot_with_strain(data, detector, frequencies, strain):
     ax1.set_yscale("log")
     ax1a.set_yscale("log")
     ax1.set_xlim(1.4e3, 4.1e3)
-    ax1.set_ylim(1e-27,)
-    ax1a.set_ylim(1e-3,)
+    ax1.set_ylim(1e-27,1e-25)
+    ax1a.set_ylim(1e-3,2e-1)
 
 
     ax2 = fig.add_axes([0.125, 0.9, 0.7775, 0.03])
     cb = mpl.colorbar.ColorbarBase(ax2, cmap=cmap, label=r'$\bar{n}_{\textrm{sig},k}$ [quanta]', norm=norm,
                                 boundaries=bounds, format='%.2f', orientation='horizontal')
 
-
     ax2.xaxis.set_ticks_position('top')
     ax2.xaxis.set_label_position('top')
-    ax2.xaxis.set_major_formatter(ticker.FormatStrFormatter('%.2f'))
-    ax2.xaxis.set_major_locator(ticker.MaxNLocator(5))
-    ax2.xaxis.set_minor_locator(ticker.AutoMinorLocator(5))
+    ax2.set_xticks([0, 0.01, 0.02,0.03])
+    ax2.set_xticklabels([0, r'$1\times10^{-2}$', r'$2\times10^{-2}$', r'$3\times10^{-2}$'])
 
     ax.set_xlabel(r'Frequency [Hz]')
     ax.set_ylabel(r'Time offset [s]')
     ax1.set_ylabel(r'Strain [1/$\sqrt{\mathrm{Hz}}$]')
     ax1a.set_ylabel(r'$|d_k(f)|$ [1/$\sqrt{\mathrm{Hz}}$]')
+    plt.minorticks_off()
 
     return fig

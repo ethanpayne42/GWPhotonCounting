@@ -4,6 +4,7 @@ import numpy as np
 from numpyro.distributions import Poisson, Geometric
 from jax import random
 from jax.scipy.special import factorial
+from scipy.interpolate import interp1d
 
 class BaseLikelihood():
     
@@ -143,21 +144,31 @@ class GaussianStrainLikelihood():
         Note that the data here should be the PSD
         '''
 
-        duration = 1/(frequencies[1]  - frequencies[0])
-        norm1 = (duration/2)**0.5 # 0.5 *duration**0.5
+        duration = 2**13/10**4
+        norm1 = 0.5 *duration**0.5 #(duration/2)**0.5
         np.random.seed()
         re1, im1 = norm1*random.normal(random.PRNGKey(np.random.randint(0,100000)), shape=(2, len(frequencies[frequencies>=0])))
         white_noise_pos = re1 + 1j * im1
 
-        white_noise = np.concatenate([np.conjugate(white_noise_pos[::-1]), white_noise_pos])
 
-        return white_noise * psd_data ** 0.5
+        white_noise_freq = np.concatenate([[0], np.conj(white_noise_pos[1:])[::-1], [re1[0]], white_noise_pos[1:]])
+
+
+        # white_noise_freq = np.zeros_like(frequencies, dtype=np.complex128)
+        # white_noise_freq[frequencies >= 0] = white_noise_pos
+        # white_noise_freq[frequencies < 0][1:] = np.conjugate(white_noise_pos)[::-1][:-1]
+
+        # white_noise_freq[len(frequencies)//2] = white_noise_freq[len(frequencies)//2].real  # ensure real at DC frequency
+        # white_noise_freq[0] = 0  # ensure zero at Nyquist
+
+        return white_noise_freq * psd_data ** 0.5
     
     def log_likelihood(self, observed_data, model_data, psd_data, frequencies):
 
         residual = observed_data - model_data
 
-        return - jnp.real(jnp.einsum('ij, ij -> i', residual,jnp.conj(residual)/psd_data)) * (frequencies[1]-frequencies[0]) # note no factor of two since the psd is defined in negative and positive frequencies
+        return - np.sum(np.abs(residual)**2 / psd_data, axis=1) * (frequencies[1]-frequencies[0]) # note no factor of two since the psd is defined in negative and positive frequencies
+        #return - jnp.real(jnp.einsum('ij, ij -> i', residual,jnp.conj(residual)/psd_data)) * (frequencies[1]-frequencies[0]) # note no factor of two since the psd is defined in negative and positive frequencies
     
     def __call__(self, observed_data, model_data, psd_data, frequencies):
         """
