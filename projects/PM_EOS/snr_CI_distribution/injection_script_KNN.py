@@ -17,8 +17,8 @@ frequencies = jnp.sort(jnp.fft.fftfreq(2**13, d=1/1e4))
 
 # Setting up the two detectors to compare the 
 detector = GWPhotonCounting.detector.Detector(
-    frequencies, '/home/ethan.payne/projects/GWPhotonCounting/examples/data/CE1_shot_psd_updated.csv', 
-    '/home/ethan.payne/projects/GWPhotonCounting/examples/data/CE1_classical_quanta_updated.csv', 
+    frequencies, '/home/ethan.payne/projects/GWPhotonCounting/examples/data/CE_shot_psd_nosqz.csv', 
+    '/home/ethan.payne/projects/GWPhotonCounting/examples/data/CE_classical_psd.csv', 
     gamma=100, random_seed=1632, N_frequency_spaces=10)
 
 zmax = 10
@@ -34,7 +34,7 @@ def sample_redshift(n):
     return np.interp(np.random.uniform(size=n), cum_sum_red, zinterp)
 
 fpeak_true = 0
-while fpeak_true < 1.8e3:
+while fpeak_true < 1.5e3:
     m1 = bilby.gw.prior.Uniform(1.2,1.4).sample(1)
     m2 = bilby.gw.prior.Uniform(1.2,1.4).sample(1)
     mtots = m1+m2
@@ -53,7 +53,8 @@ while fpeak_true < 1.8e3:
 
     fpeak_true = np.abs(frequencies[np.argmax(np.abs(PM_strain))])
 
-snr = detector.calculate_optimal_snr(PM_strain, frequencies)
+snr = detector.calculate_optimal_snr(PM_strain, frequencies, fmin=100)
+print(fpeak_true, snr)
 
 # Scale the strain to the desired SNR and generate the photon count expectation
 PM_strain_scaled = PM_strain * snr_inj/snr
@@ -70,7 +71,7 @@ convolved_likelihood = GWPhotonCounting.distributions.MixturePhotonLikelihood(po
 
 # Generate the observed signals from the likelihoods
 observed_photons = poisson_likelihood.generate_realization(expected_signal_photon_count)
-observed_strain = PM_strain_scaled + gaussian_likelihood.generate_realization(detector.total_psd, frequencies)
+observed_strain = PM_strain_scaled #+ gaussian_likelihood.generate_realization(detector.total_psd, frequencies)
 
 # Run the inference calculations
 fit_lorentzian_n = GWPhotonCounting.inference.PhotonCountingInference(detector, frequencies, convolved_likelihood).run(
@@ -78,20 +79,20 @@ fit_lorentzian_n = GWPhotonCounting.inference.PhotonCountingInference(detector, 
 
 CI_pc = np.diff(np.quantile(fit_lorentzian_n.posterior.f0.values.flatten(), np.array([0.16,0.84])))[0]
 
-fit_lorentzian_n_no_background = GWPhotonCounting.inference.PhotonCountingInference(detector, frequencies, poisson_likelihood, include_background=False).run(
-    observed_photons, num_chains=2, f0min=1.5e3, time_reconstruction=False)
-
-CI_pc_no_background = np.diff(np.quantile(fit_lorentzian_n_no_background.posterior.f0.values.flatten(), np.array([0.16,0.84])))[0]
-
 fit_lorentzian_strain = GWPhotonCounting.inference.StrainInference(detector, frequencies, gaussian_likelihood).run(
     observed_strain, num_chains=2, f0min=1.5e3, time_reconstruction=False)
 
 CI_strain = np.diff(np.quantile(fit_lorentzian_strain.posterior.f0.values.flatten(), np.array([0.16,0.84])))[0]
 
-if not os.path.exists('results'):
-    os.makedirs('results')
+if not os.path.exists('results_250609b'):
+    os.makedirs('results_250609b')
+    os.makedirs('results_250609b/outputs')
 
-np.savetxt(f'results_250311/summary_{snr_inj}_{idx}.dat', np.array([float(snr_inj), CI_pc, CI_pc_no_background, CI_strain]))
+np.savetxt(f'results_250609b/summary_{snr_inj}_{idx}.dat', np.array([float(snr_inj), CI_pc, CI_strain]))
+
+fit_lorentzian_n.to_netcdf(f'results_250609b/outputs/pc_{snr_inj}_{idx}.nc')
+fit_lorentzian_strain.to_netcdf(f'results_250609b/outputs/strain_{snr_inj}_{idx}.nc')
+
 
 
     

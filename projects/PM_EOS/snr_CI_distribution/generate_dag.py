@@ -10,7 +10,7 @@ launch_string = 'PARENT first CHILD '
 
 
 for index in range(0,100):
-    for snr in np.logspace(np.log10(0.02), np.log10(6), 30):
+    for snr in np.logspace(np.log10(0.1), np.log10(10), 30):
                 
         dag_lines += ['\n',
             f"JOB {index}_{snr} /home/ethan.payne/projects/GWPhotonCounting/projects/PM_EOS/snr_CI_distribution/injection_submit.sub",
