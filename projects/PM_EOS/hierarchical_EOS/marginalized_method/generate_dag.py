@@ -9,7 +9,7 @@ dag_lines = [f"JOB first /home/ethan.payne/projects/calibration_marginalization/
 launch_string = 'PARENT first CHILD '
 
 
-for id in range(int(1e4)):
+for id in range(int(1.1e4)):
             
     dag_lines += ['\n',
         f"JOB {id} /home/ethan.payne/projects/GWPhotonCounting/projects/PM_EOS/hierarchical_EOS/marginalized_method/injection_submit.sub",

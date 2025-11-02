@@ -9,6 +9,8 @@ import json
 import sys
 import os
 
+from scipy.optimize import minimize
+
 from astropy.cosmology import Planck18
 import astropy.units as u
 
@@ -26,25 +28,28 @@ frequencies = jnp.sort(jnp.fft.fftfreq(2**13, d=1/1e4))
 detector_nosqz = GWPhotonCounting.detector.Detector(
     frequencies, '/home/ethan.payne/projects/GWPhotonCounting/examples/data/CE_shot_psd_nosqz.csv', 
     '/home/ethan.payne/projects/GWPhotonCounting/examples/data/CE_classical_psd.csv', 
-    gamma=100, random_seed=1632, N_frequency_spaces=10)
+    gamma=100, random_seed=1632, N_frequency_spaces=10, N_time_spaces=10)
 
 detector_sqz = GWPhotonCounting.detector.Detector(
     frequencies, '/home/ethan.payne/projects/GWPhotonCounting/examples/data/CE_total_psd_sqz.csv', None, 
-    gamma=100, random_seed=1632, N_frequency_spaces=10)
+    gamma=100, random_seed=1632, N_frequency_spaces=10, N_time_spaces=10)
 
 #Loading in the individual analysis from the sample
 KNNModel = GWPhotonCounting.signal.PostMergerKNN(knn_file_path='/home/ethan.payne/code_libraries/apr4_knn_gw_model_2024/KNN_Models/APR4-knn_model-N100')
 LorentzianModel = GWPhotonCounting.signal.PostMergerLorentzian()
-dataset = np.genfromtxt(f'/home/ethan.payne/projects/GWPhotonCounting/projects/PM_EOS/hierarchical_EOS/bns_pm_dataset_MLE_250509.dat')
+dataset = np.genfromtxt(f'/home/ethan.payne/projects/GWPhotonCounting/projects/PM_EOS/hierarchical_EOS/bns_pm_dataset_MLE_250609.dat') #bns_pm_dataset_MLE_250509
 
 mtots, z, phi, psi, ra, dec, iota, f0_fit, gamma_fit, A_fit, phase_fit, snr, snr_sqz = dataset[idx]
-print('SNRs are: ', snr, snr_sqz)
 
 amplitude_samples = dataset[:, 9] #* Planck18.luminosity_distance( dataset[:,1]).value /Planck18.luminosity_distance(z).value
 gamma_samples = dataset[:, 8]
 
 # Compute the expected number of photons and the strain
 PM_strain = KNNModel.generate_strain(detector_nosqz, frequencies, mtots, phi, z, ra, dec, iota, psi)
+
+snr = detector_nosqz.calculate_optimal_snr(PM_strain, frequencies)
+snr_sqz = detector_sqz.calculate_optimal_snr(PM_strain, frequencies)
+print('SNRs are: ', snr, snr_sqz)
 
 # # What I'm doing here is generating a Lorentzian signal with the same amplitude as the KNN model
 # # I'm using this as a replacemenet/test because then the amplitude of the signal that we recover with and inject with is the same!  
@@ -61,7 +66,7 @@ PM_strain = KNNModel.generate_strain(detector_nosqz, frequencies, mtots, phi, z,
 # print(A_fit, detector_nosqz.calculate_optimal_snr(PM_strain, frequencies), snr)
 
 # Getting the frequencies
-R1d6s = np.linspace(9,15,100) # 25
+R1d6s = np.linspace(10,14,100) # 25
 f0_R1d6s = GWPhotonCounting.hierarchical.frequency_model(mtots, R1d6s)/(1+z)
 
 # Setting up the likelihood
@@ -71,10 +76,12 @@ gaussian_likelihood = GWPhotonCounting.distributions.GaussianStrainLikelihood()
 convolved_likelihood = GWPhotonCounting.distributions.MixturePhotonLikelihood(poisson_likelihood, noise_likelihood)
 
 # Marginalizing over the likelihood
-N_samples = 1000
+N_samples = 100
 N_t0s = 20
 
-
+np.random.seed()
+n_exp = np.sum(detector_nosqz.calculate_signal_photon_expectation(PM_strain, frequencies))
+print('Expected number of photons: ', n_exp)
 # Calculation for the CE1 detector
 observed_photons, signal_photons, noise_photons = convolved_likelihood.generate_realization(
         detector_nosqz.calculate_signal_photon_expectation(PM_strain, frequencies), 
@@ -89,9 +96,6 @@ _, _, noise_photons_0d5 = convolved_likelihood.generate_realization(
         detector_nosqz.calculate_signal_photon_expectation(PM_strain, frequencies),
         0.5 * detector_nosqz.noise_photon_expectation)
 observed_photons_no_background = signal_photons
-observed_strain = PM_strain + gaussian_likelihood.generate_realization(detector_sqz.total_psd, frequencies)
-observed_strain_15db = PM_strain + gaussian_likelihood.generate_realization(10**(-0.5) * detector_sqz.total_psd, frequencies)
-observed_strain_20db = PM_strain + gaussian_likelihood.generate_realization(10**(-1) * detector_sqz.total_psd, frequencies)
 
 likelihood_event_i = np.zeros(len(f0_R1d6s))
 likelihood_event_i_0d01 = np.zeros(len(f0_R1d6s))
@@ -103,9 +107,99 @@ likelihood_event_i_strain_15db = np.zeros(len(f0_R1d6s))
 likelihood_event_i_strain_20db = np.zeros(len(f0_R1d6s))
 
 t0s = jnp.linspace(-0.02, 0.02, N_t0s)
+
+# Attempt at fixing the calculation in the hierarchical analysis.....
+def neg_logl_cost_function(x0, strain, frequencies, noise_psd):
+
+    f0, gamma, log10A, phase = x0
+
+    t0s = jnp.linspace(-0.02, 0.02, 20)
+
+    # Calculate the expected strain
+    lorentzian_strain = LorentzianModel.generate_strain(
+        detector_sqz, frequencies, f0=f0, gamma=gamma, A=10**log10A, phase=phase, t0=t0s)
+
+    # Calculate the log-likelihood
+    logl = gaussian_likelihood(strain, lorentzian_strain, noise_psd,frequencies)
+
+    # Return the negative logl
+    return -logl
+
+result_fits = []
+neg_logls = []
+for i in tqdm(range(100)):
+    params_0 = [np.abs(frequencies[np.argmax(np.abs(PM_strain))]), np.random.uniform(0,200), np.random.uniform(-5,5), np.random.uniform(0,2*np.pi)]
+    minimize_result = minimize(neg_logl_cost_function, 
+                                x0=params_0,
+                                args=(PM_strain/np.max(np.abs(PM_strain)), frequencies, np.ones_like(frequencies)),
+                                bounds=((500, 5000), (0, 200), (-5, 5), (0, 2*np.pi)))
+    
+    result_fits.append(minimize_result.x)
+    neg_logls.append(minimize_result.fun)
+
+fpeak_fit, gamma_fit, log10A_fit_pc, phase_fit = result_fits[np.argmin(neg_logls)]
+neg_logl_pc = np.min(neg_logls)
+fitted_signal = LorentzianModel.generate_strain(
+        detector_sqz, frequencies, f0=fpeak_fit, gamma=gamma_fit, A=10**log10A_fit_pc * np.max(np.abs(PM_strain)), phase=phase_fit, t0=0)[0]
+snr_fit_pc = detector_nosqz.calculate_optimal_snr(fitted_signal, frequencies)
+
+# result_fits = []
+# neg_logls = []
+# #params_0 = [np.abs(frequencies[np.argmax(np.abs(PM_strain))]), np.random.uniform(0,200), jnp.log10(np.max(np.abs(PM_strain))), np.random.uniform(0,2*np.pi)]
+# for i in tqdm(range(100)):
+#     params_0 = [np.random.uniform(500,5000), np.random.uniform(0,200), np.log10(A_fit), np.random.uniform(0,2*np.pi)]
+#     minimize_result = minimize(neg_logl_cost_function, 
+#                                 x0=params_0,
+#                                 args=(PM_strain, frequencies, detector_sqz.total_psd),
+#                                 bounds=((500, 5000), (0, 200), (-40, -21), (0, 2*np.pi)))
+#     _, _, log10A_fit, _ = minimize_result.x
+
+#     result_fits.append(minimize_result.x)
+#     neg_logls.append(minimize_result.fun)
+
+# fpeak_fit, gamma_fit, log10A_fit_strain, phase_fit = result_fits[np.argmin(neg_logls)]
+# neg_logl_strain = np.min(neg_logls)
+# fitted_signal = LorentzianModel.generate_strain(
+#         detector_sqz, frequencies, f0=fpeak_fit, gamma=gamma_fit, A=10**log10A_fit_strain, phase=phase_fit, t0=0)[0]
+# snr_fit_strain = detector_sqz.calculate_optimal_snr(fitted_signal, frequencies)
+
+# log10A_fits = []
+# neg_logls = []
+# for i in tqdm(range(100)):
+#     params_0 = [np.random.uniform(500,5000), np.random.uniform(0,200), np.log10(A_fit), np.random.uniform(0,2*np.pi)]
+#     minimize_result = minimize(neg_logl_cost_function, 
+#                                 x0=params_0,
+#                                 args=(PM_strain, frequencies, 10**(-0.5) * detector_sqz.total_psd),
+#                                 bounds=((500, 5000), (0, 200), (-40, -21), (0, 2*np.pi)))
+#     _, _, log10A_fit, _ = minimize_result.x
+
+#     result_fits.append(minimize_result.x)
+# #     neg_logls.append(minimize_result.fun)
+
+# fpeak_fit, gamma_fit, log10A_fit_strain_15db, phase_fit = result_fits[np.argmin(neg_logls)]
+# neg_logl_strain_15db = np.min(neg_logls)
+# fitted_signal = LorentzianModel.generate_strain(
+#         detector_sqz, frequencies, f0=fpeak_fit, gamma=gamma_fit, A=10**log10A_fit_strain_15db, phase=phase_fit, t0=0)[0]
+# snr_fit_strain_15db = detector_sqz.calculate_optimal_snr(fitted_signal, frequencies) *(10**(-0.5))
+
+print('Log10A fit is: ', A_fit, 10**log10A_fit_pc * np.max(np.abs(PM_strain)), log10A_fit_pc)#, log10A_fit_strain, log10A_fit_strain_15db)
+print('SNRs are: ', snr, snr_sqz, snr_fit_pc)#, snr_fit_strain, snr_fit_strain_15db)
+print('neg_logls are: ', neg_logl_pc)#, neg_logl_strain * np.sum(detector_sqz.total_psd/detector_nosqz.total_psd), neg_logl_strain_15db * np.sum(detector_sqz.total_psd*10**(-0.5)/detector_nosqz.total_psd))
+print('Photon counts are: ', np.sum(signal_photons), np.sum(noise_photons), np.sum(noise_photons_0d1))
+
+A_amps = 10**log10A_fit_pc * np.max(np.abs(PM_strain)) * np.random.uniform(0, 1, size=N_samples)
+weights = A_amps / 10**log10A_fit_pc / np.max(np.abs(PM_strain))
+
 sample_indexes = np.random.choice(10000, size=N_samples, replace=False)
+gammas = gamma_samples[sample_indexes]
 
 phi0s = np.random.uniform(0, 2*np.pi, N_samples)
+epsilons = np.random.normal(loc=0, scale=61, size=N_samples)
+
+#PM_strain
+observed_strain = PM_strain + gaussian_likelihood.generate_realization(detector_sqz.total_psd, frequencies)
+observed_strain_15db = PM_strain + gaussian_likelihood.generate_realization(10**(-0.5) * detector_sqz.total_psd, frequencies)
+observed_strain_20db = PM_strain + gaussian_likelihood.generate_realization(10**(-1) * detector_sqz.total_psd, frequencies)
 
 for l, f0 in enumerate(f0_R1d6s):
 
@@ -118,17 +212,21 @@ for l, f0 in enumerate(f0_R1d6s):
     likelihood_array_i_strain_15db = np.zeros(N_samples)
     likelihood_array_i_strain_20db = np.zeros(N_samples)
 
-    print(l,f0)
+    print(l, R1d6s[l], f0)
 
     for j in range(N_samples):
 
+        A = A_amps[j] 
+
         expected_photon_count_signal = LorentzianModel.generate_photon_count(
-            detector_nosqz, frequencies, f0=f0, gamma=gamma_samples[sample_indexes[j]], A=amplitude_samples[sample_indexes[j]],
+            detector_nosqz, frequencies, f0=f0 + epsilons[j], gamma=gammas[j], A=A,#A=amplitude_samples[sample_indexes[j]],
             phase=phi0s[j], t0=t0s)
         expected_strain = LorentzianModel.generate_strain(
-            detector_nosqz, frequencies, f0=f0, gamma=gamma_samples[sample_indexes[j]], A=amplitude_samples[sample_indexes[j]],
+            detector_nosqz, frequencies, f0=f0 + epsilons[j], gamma=gammas[j], A=A,#A=amplitude_samples[sample_indexes[j]],
             phase=phi0s[j], t0=t0s)
-        
+        expected_strain_15db = LorentzianModel.generate_strain(
+            detector_nosqz, frequencies, f0=f0 + epsilons[j], gamma=gammas[j], A=A,#A=amplitude_samples[sample_indexes[j]],
+            phase=phi0s[j], t0=t0s)
         
         likelihood_array_i[j] = convolved_likelihood(
             signal_photons+noise_photons, expected_photon_count_signal, detector_nosqz.noise_photon_expectation)
@@ -142,9 +240,10 @@ for l, f0 in enumerate(f0_R1d6s):
             observed_photons_no_background, expected_photon_count_signal)
     
         likelihood_array_i_strain[j] = gaussian_likelihood(observed_strain, expected_strain, detector_sqz.total_psd, frequencies)
-        likelihood_array_i_strain_15db[j] = gaussian_likelihood(observed_strain_15db, expected_strain, 10**(-0.5) * detector_sqz.total_psd, frequencies)
+        likelihood_array_i_strain_15db[j] = gaussian_likelihood(observed_strain_15db, expected_strain_15db, 10**(-0.5) * detector_sqz.total_psd, frequencies)
         likelihood_array_i_strain_20db[j] = gaussian_likelihood(observed_strain_20db, expected_strain, 10**(-1) * detector_sqz.total_psd, frequencies)
 
+    #, b=weights
     likelihood_event_i[l] = jax.scipy.special.logsumexp(likelihood_array_i) - jnp.log(len(likelihood_array_i))
     likelihood_event_i_0d01[l] = jax.scipy.special.logsumexp(likelihood_array_i_0d01) - jnp.log(len(likelihood_array_i_0d01))
     likelihood_event_i_0d1[l] = jax.scipy.special.logsumexp(likelihood_array_i_0d1) - jnp.log(len(likelihood_array_i_0d1))
@@ -153,6 +252,9 @@ for l, f0 in enumerate(f0_R1d6s):
     likelihood_event_i_strain[l] = jax.scipy.special.logsumexp(likelihood_array_i_strain) - jnp.log(len(likelihood_array_i_strain))
     likelihood_event_i_strain_15db[l] = jax.scipy.special.logsumexp(likelihood_array_i_strain_15db) - jnp.log(len(likelihood_array_i_strain_15db))
     likelihood_event_i_strain_20db[l] = jax.scipy.special.logsumexp(likelihood_array_i_strain_20db) - jnp.log(len(likelihood_array_i_strain_20db))
+
+    print('PC Likelihoods are: ', likelihood_event_i[l], likelihood_event_i_0d1[l])
+    print('ST Likelihoods are: ', likelihood_event_i_strain[l], likelihood_event_i_strain_15db[l])
 
 data = {'logls':list(likelihood_event_i), 
         'logls_0d01':list(likelihood_event_i_0d01),
@@ -167,8 +269,10 @@ data = {'logls':list(likelihood_event_i),
         'n_noise_photons_0d01':float(jnp.sum(noise_photons_0d01)),
         'n_noise_photons_0d1':float(jnp.sum(noise_photons_0d1)),
         'n_noise_photons_0d5':float(jnp.sum(noise_photons_0d5)),
-        'snr':float(snr), 'snr_sqz':float(snr_sqz), 'mtot':mtots, 'z':z, 'phi':phi, 'psi':psi, 'ra':ra, 'dec':dec, 'iota':iota, 'f0_fit':f0_fit, 
-        'gamma_fit':gamma_fit, 'A_fit':A_fit, 'phase_fit':phase_fit}
+        'snr':float(snr), 'snr_sqz':float(snr_sqz), 'n_exp':float(n_exp),
+        'mtot':mtots, 'z':z, 'phi':phi, 'psi':psi, 'ra':ra, 'dec':dec, 'iota':iota, 'f0_fit':f0_fit, 
+        'gamma_fit':gamma_fit, 'log10A_fit_pc':float(np.log10(10**log10A_fit_pc * np.max(np.abs(PM_strain)))),
+        'snr_fit_pc':float(snr_fit_pc), 'phase_fit':phase_fit}
 
-with open(f'results_250512/result_CE_{idx}.json', 'w') as f:
+with open(f'results_250623/result_CE_{idx}.json', 'w') as f:
     json.dump(data, f)
